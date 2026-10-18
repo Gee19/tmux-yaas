@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Agent list for the side pane: one entry per Claude pane across all sessions.
+# 1-9 jumps to that agent, q closes the sidebar. --once prints one frame.
+
+hex_fg() {  # '#rrggbb' -> truecolor escape
+  local h="${1#\#}"
+  printf '\e[38;2;%d;%d;%dm' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"
+}
+
+opt() {
+  local value
+  value="$(tmux show -gqv "$1")"
+  echo "${value:-$2}"
+}
+
+c_working="$(hex_fg "$(opt @yaas_working_color '#bb9af7')")"
+c_waiting="$(hex_fg "$(opt @yaas_waiting_color '#f7768e')")"
+c_idle="$(hex_fg "$(opt @yaas_idle_color '#9ece6a')")"
+c_dim=$'\e[38;2;86;95;137m'
+bold=$'\e[1m'
+reset=$'\e[0m'
+
+age() {
+  local s=$(( $(date +%s) - $1 ))
+  if (( s < 60 )); then echo "${s}s"
+  elif (( s < 3600 )); then echo "$(( s / 60 ))m"
+  else echo "$(( s / 3600 ))h"
+  fi
+}
+
+render() {
+  local cols frame out n=0 working=0 waiting=0
+  cols="$(tput cols)"
+  # looked up each frame: the sidebar moves between windows
+  local my_window
+  my_window="$(tmux display -p -t "${TMUX_PANE:-}" '#{window_id}' 2>/dev/null)"
+  case $(( $(date +%s) % 4 )) in
+    0) frame='●∙∙' ;; 2) frame='∙∙●' ;; *) frame='∙●∙' ;;
+  esac
+
+  local body=""
+  while IFS=$'\t' read -r id win wname path cmd state since wid; do
+    [ -n "$id" ] || continue
+    n=$(( n + 1 ))
+
+    # a shell in the pane means claude exited without a SessionEnd
+    case "$cmd" in
+      zsh|bash|sh|fish|dash) state=ended ;;
+    esac
+
+    local dot color
+    case "$state" in
+      working) dot="$frame"; color="$c_working"; working=$(( working + 1 )) ;;
+      waiting) dot='●'; color="$c_waiting"; waiting=$(( waiting + 1 )) ;;
+      idle)    dot='●'; color="$c_idle" ;;
+      *)       dot='○'; color="$c_dim" ;;
+    esac
+
+    local here=' '
+    [ "$wid" = "$my_window" ] && here='▸'
+
+    local name="${path##*/}"
+    local line1="${name:0:$(( cols - 8 ))}"
+    local line2="$win $wname · $state $(age "${since:-$(date +%s)}")"
+    line2="${line2:0:$(( cols - 4 ))}"
+
+    if (( n <= 9 )); then
+      body+="${here}${bold}${n}${reset} ${color}${dot}${reset} ${bold}${line1}${reset}"$'\n'
+    else
+      body+="${here}  ${color}${dot}${reset} ${bold}${line1}${reset}"$'\n'
+    fi
+    body+="    ${c_dim}${line2}${reset}"$'\n\n'
+  done < <(tmux list-panes -a -f '#{@yaas_pane_state}' \
+    -F '#{pane_id}	#{session_name}:#{window_index}	#{window_name}	#{pane_current_path}	#{pane_current_command}	#{@yaas_pane_state}	#{@yaas_pane_since}	#{window_id}')
+
+  out="${bold} Agents${reset}"
+  (( working )) && out+="  ${c_working}${working} working${reset}"
+  (( waiting )) && out+="  ${c_waiting}${waiting} waiting${reset}"
+  out+=$'\n\n'
+  if (( n )); then out+="$body"; else out+=" ${c_dim}no claude sessions${reset}"$'\n\n'; fi
+  out+=" ${c_dim}1-9 jump · q close${reset}"
+
+  printf '%s' "$out"
+}
+
+jump() {
+  local id="${AGENT_IDS[$(( $1 - 1 ))]}"
+  [ -n "$id" ] || return
+  tmux switch-client -t "$id" \; select-window -t "$id" \; select-pane -t "$id"
+}
+
+if [ "$1" = --once ]; then
+  render
+  echo
+  exit 0
+fi
+
+tput civis
+trap 'tput cnorm' EXIT
+clear
+while :; do
+  frame_text="$(render)"
+  # render runs in a subshell, so list the jump targets (same order) out here
+  mapfile -t AGENT_IDS < <(tmux list-panes -a -f '#{@yaas_pane_state}' -F '#{pane_id}')
+  tput cup 0 0
+  # \e[K wipes leftovers when a line gets shorter (59s -> 1m)
+  printf '%s' "${frame_text//$'\n'/$'\e[K\n'}"
+  tput ed
+  if read -rsn1 -t 1 key; then
+    case "$key" in
+      [1-9]) jump "$key" ;;
+      q) tmux kill-pane -t "$TMUX_PANE" ;;
+    esac
+  fi
+done

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Move the agent sidebar into the window you just switched to.
+# Run from session-window-changed / client-session-changed hooks.
+
+[ "$(tmux show -gqv @yaas_sidebar_follow)" = off ] && exit 0
+
+target="$1"
+pane="$(tmux list-panes -a -f '#{@yaas_sidebar}' -F '#{pane_id}' | head -1)"
+[ -n "$pane" ] && [ -n "$target" ] || exit 0
+
+[ "$(tmux display -p -t "$pane" '#{window_id}')" = "$target" ] && exit 0
+# joining a zoomed window would unzoom it
+[ "$(tmux display -p -t "$target" '#{window_zoomed_flag}')" = 1 ] && exit 0
+
+width="$(tmux display -p -t "$pane" '#{pane_width}')"
+tmux join-pane -hbf -d -l "$width" -s "$pane" -t "$target"

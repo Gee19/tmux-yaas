@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Open or close the agent sidebar. Usage: toggle-sidebar <window_id>
+# With @yaas_sidebar_follow on (default) there's one sidebar that follows
+# you between windows; with it off, each window gets its own.
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+win="${1:-$(tmux display -p '#{window_id}')}"
+
+if [ "$(tmux show -gqv @yaas_sidebar_follow)" = off ]; then
+  existing="$(tmux list-panes -t "$win" -f '#{@yaas_sidebar}' -F '#{pane_id}')"
+else
+  existing="$(tmux list-panes -a -f '#{@yaas_sidebar}' -F '#{pane_id}')"
+fi
+if [ -n "$existing" ]; then
+  for p in $existing; do tmux kill-pane -t "$p"; done
+  exit 0
+fi
+
+width="$(tmux show -gqv @yaas_sidebar_width)"
+pane="$(tmux split-window -hbf -l "${width:-32}" -t "$win" -P -F '#{pane_id}' "$DIR/sidebar")"
+tmux set -p -t "$pane" @yaas_sidebar 1

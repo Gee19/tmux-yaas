@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Claude Code hook: record claude's state on the tmux window it runs in.
+# @yaas_state (window) drives the status bar dot; @yaas_pane_state and
+# @yaas_pane_since (pane) drive the sidebar. The pane options need their own
+# names because tmux falls back from pane to window options.
+# Registered for every relevant hook event; reads the hook JSON on stdin.
+
+[ -n "$TMUX_PANE" ] || exit 0
+
+read -r event ntype tool source < <(
+  jq -r '[.hook_event_name, (.notification_type // "-"), (.tool_name // "-"), (.source // "-")] | @tsv'
+)
+
+# SessionStart also fires after a (possibly mid-turn) compaction
+[ "$event" = SessionStart ] && [ "$source" = compact ] && exit 0
+
+case "$event" in
+  SessionStart|Stop|StopFailure) state=idle ;;
+  UserPromptSubmit|PostToolUse|PostToolUseFailure) state=working ;;
+  PreToolUse)
+    [ "$tool" = AskUserQuestion ] && state=waiting || state=working ;;
+  PermissionRequest) state=waiting ;;
+  Notification)
+    case "$ntype" in
+      permission_prompt|elicitation_dialog) state=waiting ;;
+      *) exit 0 ;;  # idle_prompt etc. shouldn't flip idle to waiting
+    esac ;;
+  SessionEnd)
+    tmux set -wu -t "$TMUX_PANE" @yaas_state \; \
+      set -pu -t "$TMUX_PANE" @yaas_pane_state \; \
+      set -pu -t "$TMUX_PANE" @yaas_pane_since 2>/dev/null
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+
+tmux set -w -t "$TMUX_PANE" @yaas_state "$state" 2>/dev/null
+# only restart the clock when the state actually changes
+if [ "$(tmux display -p -t "$TMUX_PANE" '#{@yaas_pane_state}')" != "$state" ]; then
+  tmux set -p -t "$TMUX_PANE" @yaas_pane_state "$state" \; \
+    set -p -t "$TMUX_PANE" @yaas_pane_since "$(date +%s)" 2>/dev/null
+fi
+exit 0
