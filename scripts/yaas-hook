@@ -35,8 +35,16 @@ esac
 
 tmux set -w -t "$TMUX_PANE" @yaas_state "$state" 2>/dev/null
 # only restart the clock when the state actually changes
-if [ "$(tmux display -p -t "$TMUX_PANE" '#{@yaas_pane_state}')" != "$state" ]; then
+IFS=$'\t' read -r prev tty beep < <(
+  tmux display -p -t "$TMUX_PANE" '#{@yaas_pane_state}	#{pane_tty}	#{@yaas_beep}'
+)
+if [ "$prev" != "$state" ]; then
   tmux set -p -t "$TMUX_PANE" @yaas_pane_state "$state" \; \
     set -p -t "$TMUX_PANE" @yaas_pane_since "$(date +%s)" 2>/dev/null
+  # beep when claude finishes or needs you; BEL on the pane's tty goes
+  # through tmux's bell handling (bell-action, visual-bell)
+  if [ "$prev" = working ] && [ "$beep" != off ] && [ -w "$tty" ]; then
+    printf '\a' > "$tty"
+  fi
 fi
 exit 0

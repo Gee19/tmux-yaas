@@ -90,7 +90,10 @@ The defaults are TokyoNight colors; the sidebar uses them too.
 set -g @yaas_sidebar_key   'a'
 set -g @yaas_sidebar_width '32'
 set -g @yaas_sidebar_follow 'on'   # 'off' gives each window its own sidebar
+set -g @yaas_beep 'on'             # 'off' silences the bell
 ```
+
+When a pane goes from working to idle or waiting, the hook rings the bell on that pane. tmux handles it like any other bell: `bell-action` decides which windows can ring, `visual-bell` shows a message instead of passing the beep to your terminal, and the window gets the `!` flag until you visit it.
 
 ## Quirks
 
